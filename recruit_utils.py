@@ -13,7 +13,7 @@ Keep the Surprise Going
 """
 
 import pandas as pd
-from sklearn import preprocessing, metrics
+from sklearn import preprocessing, metrics, cluster
 
 
 def import_data():
@@ -84,9 +84,11 @@ def import_data():
     stores = pd.merge(stores, tmp, how='left', on=['air_store_id', 'dow'])
 
     stores = pd.merge(stores, data['as'], how='left', on=['air_store_id'])
+
     # NEW FEATURES FROM Georgii Vyshnia
     stores['air_genre_name'] = stores['air_genre_name'].map(lambda x: str(str(x).replace('/', ' ')))
     stores['air_area_name'] = stores['air_area_name'].map(lambda x: str(str(x).replace('-', ' ')))
+
     lbl = preprocessing.LabelEncoder()
     for i in range(10):
         stores['air_genre_name' + str(i)] = lbl.fit_transform(
@@ -144,6 +146,12 @@ def create_train_test(data, stores):
     test = test.fillna(-1)
 
     return train, test
+
+
+def cluster_regions(df):
+    X = df[['longitude', 'latitude']].as_matrix()
+    kmeans = cluster.KMeans(n_clusters=6, init='k-means++', n_init=25, max_iter=1000).fit(X)
+    return kmeans
 
 
 def RMSLE(y, pred):
