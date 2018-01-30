@@ -14,7 +14,6 @@ Keep the Surprise Going
 
 import pandas as pd
 import numpy as np
-from datetime import timedelta
 from sklearn import preprocessing, metrics, cluster
 
 
@@ -50,37 +49,36 @@ def import_data():
         data[df] = pd.merge(tmp1, tmp2, how='inner', on=['air_store_id', 'visit_date'])
 
     data['tra']['visit_date'] = pd.to_datetime(data['tra']['visit_date'])
+    data['tra']['log_visitors'] = data['tra']['visitors'].apply(np.log)
     data['tra']['dow'] = data['tra']['visit_date'].dt.dayofweek
     data['tra']['wom'] = (data['tra']['visit_date'].dt.day - 1) // 7 + 1
     data['tra']['year'] = data['tra']['visit_date'].dt.year
     data['tra']['month'] = data['tra']['visit_date'].dt.month
     data['tra']['day'] = data['tra']['visit_date'].dt.day
-    data['tra']['days_since_payday'] = data['tra'].apply(
-        lambda r: r['visit_date'].to_pydatetime().day - 25 if r['visit_date'].to_pydatetime().day >= 25 else (r['visit_date'] - pd.offsets.MonthEnd()).to_pydatetime().day - 25 + r['visit_date'].to_pydatetime().day, axis=1)
     data['tra']['visit_date'] = data['tra']['visit_date'].dt.date
 
     data['tes']['visit_date'] = data['tes']['id'].map(lambda x: str(x).split('_')[2])
     data['tes']['air_store_id'] = data['tes']['id'].map(lambda x: '_'.join(x.split('_')[:2]))
     data['tes']['visit_date'] = pd.to_datetime(data['tes']['visit_date'])
+    data['tes']['log_visitors'] = 0
     data['tes']['dow'] = data['tes']['visit_date'].dt.dayofweek
     data['tes']['wom'] = (data['tes']['visit_date'].dt.day - 1) // 7 + 1
     data['tes']['year'] = data['tes']['visit_date'].dt.year
     data['tes']['month'] = data['tes']['visit_date'].dt.month
     data['tes']['day'] = data['tes']['visit_date'].dt.day
-    data['tes']['days_since_payday'] = data['tes'].apply(
-        lambda r: r['visit_date'].to_pydatetime().day - 25 if r['visit_date'].to_pydatetime().day >= 25 else (r['visit_date'] - pd.offsets.MonthEnd()).to_pydatetime().day - 25 + r['visit_date'].to_pydatetime().day, axis=1)
     data['tes']['visit_date'] = data['tes']['visit_date'].dt.date
 
     # Manual differencing
     data['tra'].sort_values(by=['air_store_id', 'visit_date'], inplace=True)
     data['tra']['visitor_diff'] = data['tra']['visitors'].diff()
+    data['tra']['log_visitor_diff'] = data['tra']['log_visitors'].diff()
     mask = data['tra']['air_store_id'] != data['tra']['air_store_id'].shift(1)
     data['tra']['visitor_diff'][mask] = np.nan
+    data['tra']['log_visitor_diff'][mask] = np.nan
 
     data['tes'].sort_values(by=['air_store_id', 'visit_date'], inplace=True)
-    data['tes']['visitor_diff'] = data['tes']['visitors'].diff()
-    mask = data['tes']['air_store_id'] != data['tes']['air_store_id'].shift(1)
-    data['tes']['visitor_diff'][mask] = np.nan
+    data['tes']['visitor_diff'] = 0
+    data['tes']['log_visitor_diff'] = 0
 
     unique_stores = data['tes']['air_store_id'].unique()
     stores = pd.concat([pd.DataFrame({'air_store_id': unique_stores,
@@ -118,6 +116,10 @@ def import_data():
             stores['air_area_name'].map(lambda x: str(str(x).split(' ')[i]) if len(str(x).split(' ')) > i else ''))
     stores['air_genre_name'] = lbl.fit_transform(stores['air_genre_name'])
     stores['air_area_name'] = lbl.fit_transform(stores['air_area_name'])
+
+    # Location clustering by LAM
+    cluster_stores = cluster_regions(stores[['longitude', 'latitude']])
+    stores['cluster'] = cluster_stores.predict(stores[['longitude', 'latitude']].as_matrix())
 
     data['hol']['visit_date'] = pd.to_datetime(data['hol']['visit_date'])
     data['hol']['day_of_week'] = lbl.fit_transform(data['hol']['day_of_week'])
