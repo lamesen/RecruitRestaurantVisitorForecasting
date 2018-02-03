@@ -48,6 +48,7 @@ def import_data():
             columns={'visit_datetime': 'visit_date', 'reserve_datetime_diff': 'rs2', 'reserve_visitors': 'rv2'})
         data[df] = pd.merge(tmp1, tmp2, how='inner', on=['air_store_id', 'visit_date'])
 
+    # Feature engineering: log(visitors), day of week, week of month, year, month, day, etc.
     data['tra']['visit_date'] = pd.to_datetime(data['tra']['visit_date'])
     data['tra']['log_visitors'] = data['tra']['visitors'].apply(np.log)
     data['tra']['dow'] = data['tra']['visit_date'].dt.dayofweek
@@ -68,7 +69,7 @@ def import_data():
     data['tes']['day'] = data['tes']['visit_date'].dt.day
     data['tes']['visit_date'] = data['tes']['visit_date'].dt.date
 
-    # Manual differencing
+    # Manual differencing by me!
     data['tra'].sort_values(by=['air_store_id', 'visit_date'], inplace=True)
     data['tra']['visitor_diff'] = data['tra']['visitors'].diff()
     data['tra']['log_visitor_diff'] = data['tra']['log_visitors'].diff()
@@ -80,12 +81,13 @@ def import_data():
     data['tes']['visitor_diff'] = 0
     data['tes']['log_visitor_diff'] = 0
 
+    # Create unique store data frame for future feature engineering
     unique_stores = data['tes']['air_store_id'].unique()
     stores = pd.concat([pd.DataFrame({'air_store_id': unique_stores,
                                       'dow': [i] * len(unique_stores)}) for i in range(7)],
                        axis=0, ignore_index=True).reset_index(drop=True)
 
-    # sure it can be compressed...
+    # Add descriptive statistics by store and day of week: min, mean, median, max and count of visitors
     tmp = data['tra'].groupby(['air_store_id', 'dow'], as_index=False)['visitors'].min().rename(
         columns={'visitors': 'min_visitors'})
     stores = pd.merge(stores, tmp, how='left', on=['air_store_id', 'dow'])
@@ -104,7 +106,7 @@ def import_data():
 
     stores = pd.merge(stores, data['as'], how='left', on=['air_store_id'])
 
-    # NEW FEATURES FROM Georgii Vyshnia
+    # NEW FEATURES FROM Georgii Vyshnia (not that useful)
     stores['air_genre_name'] = stores['air_genre_name'].map(lambda x: str(str(x).replace('/', ' ')))
     stores['air_area_name'] = stores['air_area_name'].map(lambda x: str(str(x).replace('-', ' ')))
 
@@ -117,8 +119,8 @@ def import_data():
     stores['air_genre_name'] = lbl.fit_transform(stores['air_genre_name'])
     stores['air_area_name'] = lbl.fit_transform(stores['air_area_name'])
 
-    # Location clustering by LAM
-    cluster_stores = cluster_regions(stores[['longitude', 'latitude']])
+    # Location clustering by me!
+    cluster_stores = cluster_regions(stores[['longitude', 'latitude']], 8)
     stores['cluster'] = cluster_stores.predict(stores[['longitude', 'latitude']].as_matrix())
 
     data['hol']['visit_date'] = pd.to_datetime(data['hol']['visit_date'])
@@ -128,7 +130,7 @@ def import_data():
     return data, stores
 
 
-def create_train_test(data, stores):
+def create_train_test(data, stores, clean=False):
     train = pd.merge(data['tra'], data['hol'], how='left', on=['visit_date'])
     test = pd.merge(data['tes'], data['hol'], how='left', on=['visit_date'])
 
@@ -165,15 +167,30 @@ def create_train_test(data, stores):
     train['air_store_id2'] = lbl.fit_transform(train['air_store_id'])
     test['air_store_id2'] = lbl.transform(test['air_store_id'])
 
+    if clean:
+        train, test = train_clean(train, test)
+
     train = train.fillna(-1)
     test = test.fillna(-1)
 
     return train, test
 
 
-def cluster_regions(df):
+def train_clean(train, test):
+    '''
+    Remove observations from the training set with categorical_vars that aren't in the test
+    set
+    '''
+
+    categorical_vars = ['air_genre_name', 'air_area_name', 'air_store_id2', 'cluster']
+    for var in categorical_vars:
+        new_train = train[train[var].isin(test[var].unique())]
+    return new_train, test
+
+
+def cluster_regions(df, n_clusters):
     X = df[['longitude', 'latitude']].as_matrix()
-    kmeans = cluster.KMeans(n_clusters=6, init='k-means++', n_init=25, max_iter=1000).fit(X)
+    kmeans = cluster.KMeans(n_clusters=n_clusters, init='k-means++', n_init=25, max_iter=1000).fit(X)
     return kmeans
 
 
