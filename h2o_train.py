@@ -23,14 +23,13 @@ def convert_columns_as_factor(hdf, column_list):
 data, stores = recruit_utils.import_data()
 
 # Create train and test set
-train, test = recruit_utils.create_train_test(data, stores)
+train, test = recruit_utils.create_train_test(data, stores, clean=True, predict_large_party=True)
 
 # Initialize h2o cluster
 h2o.init()
 
 # Drop un-needed ID variables and target variable transformations
-train_subset = train.drop(['air_store_id', 'visit_date', 'id', 'air_store_id2',
-                           'visitors', 'visitor_diff', 'log_visitor_diff'], axis=1)
+train_subset = train.drop(['air_store_id', 'visit_date', 'id', 'air_store_id2', 'visitors'], axis=1)
 
 # Create an H2O data frame (HDF) from the pandas data frame
 h2o_train = h2o.H2OFrame(train_subset)
@@ -44,14 +43,17 @@ convert_columns_as_factor(h2o_train, ['dow', 'wom', 'year', 'month', 'day', 'day
                                       'air_genre_name9', 'air_area_name0', 'air_area_name1', 'air_area_name2',
                                       'air_area_name3', 'air_area_name4', 'air_area_name5',
                                       'air_area_name6', 'air_area_name7', 'air_area_name8',
-                                      'air_area_name9', 'cluster'])
+                                      'air_area_name9', 'cluster', 'large_party'])
 
-# Setup Auto ML to run for approximately 7 hours
-aml = H2OAutoML(max_runtime_secs=25000)
+# Setup Auto ML to run for approximately 10 hours
+aml = H2OAutoML(max_runtime_secs=36000)
 
 # Train Auto ML
 aml.train(y="log_visitors",
           training_frame=h2o_train)
+
+# Save results
+model_path = h2o.save_model(model=aml, path="./tmp/mymodel", force=True)
 
 # Output leaderboard
 lb = aml.leaderboard
@@ -68,4 +70,4 @@ temp_df = h2o.as_list(preds)
 temp_series = temp_df['predict']
 temp_series[temp_series < 0] = 0
 scored_df['visitors'] = np.exp(temp_series)
-scored_df.to_csv('scored_yymmdd.csv', index=False)
+scored_df.to_csv('./Output/scored_automl.csv', index=False)

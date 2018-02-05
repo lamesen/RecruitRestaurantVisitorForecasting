@@ -15,6 +15,8 @@ Keep the Surprise Going
 import pandas as pd
 import numpy as np
 from sklearn import preprocessing, metrics, cluster
+from sklearn.model_selection import TimeSeriesSplit
+import statsmodels.api as sm
 
 
 def import_data():
@@ -57,6 +59,7 @@ def import_data():
     data['tra']['month'] = data['tra']['visit_date'].dt.month
     data['tra']['day'] = data['tra']['visit_date'].dt.day
     data['tra']['visit_date'] = data['tra']['visit_date'].dt.date
+    data['tra']['large_party'] = np.where(data['tra']['visitors'] >= 120, 1., 0.)
 
     data['tes']['visit_date'] = data['tes']['id'].map(lambda x: str(x).split('_')[2])
     data['tes']['air_store_id'] = data['tes']['id'].map(lambda x: '_'.join(x.split('_')[:2]))
@@ -68,18 +71,32 @@ def import_data():
     data['tes']['month'] = data['tes']['visit_date'].dt.month
     data['tes']['day'] = data['tes']['visit_date'].dt.day
     data['tes']['visit_date'] = data['tes']['visit_date'].dt.date
+    data['tes']['large_party'] = np.where(data['tes']['visitors'] >= 120, 1., 0.)
 
     # Manual differencing by me!
-    data['tra'].sort_values(by=['air_store_id', 'visit_date'], inplace=True)
-    data['tra']['visitor_diff'] = data['tra']['visitors'].diff()
-    data['tra']['log_visitor_diff'] = data['tra']['log_visitors'].diff()
-    mask = data['tra']['air_store_id'] != data['tra']['air_store_id'].shift(1)
-    data['tra']['visitor_diff'][mask] = np.nan
-    data['tra']['log_visitor_diff'][mask] = np.nan
+    data['tra']['subset'] = 'train'
+    data['tes']['subset'] = 'test'
+    combined = pd.concat([data['tra'], data['tes']])
+    combined.sort_values(by=['air_store_id', 'visit_date'], inplace=True)
+    combined['visitors_lag1'] = combined.groupby(['air_store_id'])['visitors'].shift()
+    combined['visitors_diff1'] = combined.groupby(['air_store_id'])['visitors'].diff()
+    combined['visitors_lag2'] = combined.groupby(['air_store_id'])['visitors'].shift(2)
+    combined['visitors_diff2'] = combined.groupby(['air_store_id'])['visitors'].diff(2)
+    combined['visitors_lag3'] = combined.groupby(['air_store_id'])['visitors'].shift(3)
+    combined['visitors_diff3'] = combined.groupby(['air_store_id'])['visitors'].diff(3)
+    combined['visitors_lag4'] = combined.groupby(['air_store_id'])['visitors'].shift(4)
+    combined['visitors_diff4'] = combined.groupby(['air_store_id'])['visitors'].diff(4)
+    combined['visitors_lag5'] = combined.groupby(['air_store_id'])['visitors'].shift(5)
+    combined['visitors_diff5'] = combined.groupby(['air_store_id'])['visitors'].diff(5)
+    combined['visitors_lag6'] = combined.groupby(['air_store_id'])['visitors'].shift(6)
+    combined['visitors_diff6'] = combined.groupby(['air_store_id'])['visitors'].diff(6)
+    combined['visitors_lag7'] = combined.groupby(['air_store_id'])['visitors'].shift(7)
+    combined['visitors_diff7'] = combined.groupby(['air_store_id'])['visitors'].diff(7)
 
-    data['tes'].sort_values(by=['air_store_id', 'visit_date'], inplace=True)
-    data['tes']['visitor_diff'] = 0
-    data['tes']['log_visitor_diff'] = 0
+    data['tra'] = combined[combined['subset'] == 'train']
+    data['tra'].drop('subset', axis=1)
+    data['tes'] = combined[combined['subset'] == 'test']
+    data['tes'].drop('subset', axis=1)
 
     # Create unique store data frame for future feature engineering
     unique_stores = data['tes']['air_store_id'].unique()
@@ -130,7 +147,7 @@ def import_data():
     return data, stores
 
 
-def create_train_test(data, stores, clean=False):
+def create_train_test(data, stores, clean=False, predict_large_party=False):
     train = pd.merge(data['tra'], data['hol'], how='left', on=['visit_date'])
     test = pd.merge(data['tes'], data['hol'], how='left', on=['visit_date'])
 
@@ -173,6 +190,23 @@ def create_train_test(data, stores, clean=False):
     train = train.fillna(-1)
     test = test.fillna(-1)
 
+    if predict_large_party:
+        train['large_party'] = np.where(train['visitors'] >= 120, 1., 0.)
+
+        subset = ['dow', 'wom', 'year', 'month', 'day', 'day_of_week', 'holiday_flg',
+                  'air_genre_name', 'air_area_name', 'air_store_id2', 'cluster',
+                  'min_visitors', 'mean_visitors', 'median_visitors', 'max_visitors',
+                  'count_observations', 'rs1_x', 'rv1_x', 'rs2_x', 'rv2_x', 'rs1_y',
+                  'rv1_y', 'rs2_y', 'rv2_y', 'total_reserv_sum', 'total_reserv_mean',
+                  'total_reserv_dt_diff_mean']
+
+        y = train['large_party']
+        X = train[subset]
+
+        lr = sm.Logit(y, X)
+        model = lr.fit()
+        test['large_party'] = model.predict(test[subset])
+
     return train, test
 
 
@@ -196,3 +230,29 @@ def cluster_regions(df, n_clusters):
 
 def RMSLE(y, pred):
     return metrics.mean_squared_error(y, pred) ** 0.5
+
+
+def time_series_cv(y, X, input_model):
+    tscv = TimeSeriesSplit(n_splits=5)
+    results = []
+
+    for train_index, test_index in tscv.split(X):
+        X_train, X_test = X[train_index], X[test_index]
+        y_train, y_test = y[train_index], y[test_index]
+        model = input_model.fit(X_train, y_train)
+        predictions = model.predict(X_test)
+        results.append(RMSLE(y_test, predictions))
+
+    return results
+
+
+def score_predictions(predictions, name, log=True):
+    # Score the file and save
+    scored_df = pd.read_csv('./data/sample_submission.csv')
+    temp_series = pd.Series(predictions)
+    temp_series[temp_series < 0] = 0
+    if log:
+        scored_df['visitors'] = np.exp(temp_series)
+    else:
+        scored_df['visitors'] = temp_series
+    scored_df.to_csv('./Output/' + name + '.csv', index=False)
