@@ -32,9 +32,10 @@ def import_data():
         'hol': pd.read_csv('./data/date_info.csv').rename(columns={'calendar_date': 'visit_date'})
     }
 
+    # Join HPG id to store relation id; we will be using AirREGI id primarily
     data['hr'] = pd.merge(data['hr'], data['id'], how='inner', on=['hpg_store_id'])
 
-    # Date/Time transformations
+    # Date/Time transformations in the AirREGI/HPG reservation data
     for df in ['ar', 'hr']:
         data[df]['visit_datetime'] = pd.to_datetime(data[df]['visit_datetime'])
         data[df]['visit_datetime'] = data[df]['visit_datetime'].dt.date
@@ -61,6 +62,7 @@ def import_data():
     data['tra']['visit_date'] = data['tra']['visit_date'].dt.date
     data['tra']['large_party'] = np.where(data['tra']['visitors'] >= 120, 1., 0.)
 
+    # Create the same features for the test data
     data['tes']['visit_date'] = data['tes']['id'].map(lambda x: str(x).split('_')[2])
     data['tes']['air_store_id'] = data['tes']['id'].map(lambda x: '_'.join(x.split('_')[:2]))
     data['tes']['visit_date'] = pd.to_datetime(data['tes']['visit_date'])
@@ -73,7 +75,7 @@ def import_data():
     data['tes']['visit_date'] = data['tes']['visit_date'].dt.date
     data['tes']['large_party'] = np.where(data['tes']['visitors'] >= 120, 1., 0.)
 
-    # Manual differencing by me!
+    # Manual differencing by me! We combine train and test so that we can build the full differencing
     data['tra']['subset'] = 'train'
     data['tes']['subset'] = 'test'
     combined = pd.concat([data['tra'], data['tes']])
@@ -93,6 +95,7 @@ def import_data():
     combined['visitors_lag7'] = combined.groupby(['air_store_id'])['log_visitors'].shift(7)
     combined['visitors_diff7'] = combined.groupby(['air_store_id'])['log_visitors'].diff(7)
 
+    # Split train and test again
     data['tra'] = combined[combined['subset'] == 'train']
     data['tra'].drop('subset', axis=1)
     data['tes'] = combined[combined['subset'] == 'test']
@@ -127,6 +130,7 @@ def import_data():
     stores['air_genre_name'] = stores['air_genre_name'].map(lambda x: str(str(x).replace('/', ' ')))
     stores['air_area_name'] = stores['air_area_name'].map(lambda x: str(str(x).replace('-', ' ')))
 
+    # Label encoding for Genre and Area names
     lbl = preprocessing.LabelEncoder()
     for i in range(10):
         stores['air_genre_name' + str(i)] = lbl.fit_transform(
@@ -136,10 +140,11 @@ def import_data():
     stores['air_genre_name'] = lbl.fit_transform(stores['air_genre_name'])
     stores['air_area_name'] = lbl.fit_transform(stores['air_area_name'])
 
-    # Location clustering by me!
+    # Location clustering by me! Clustering by latitude and longitude k=8
     cluster_stores = cluster_regions(stores[['longitude', 'latitude']], 8)
     stores['cluster'] = cluster_stores.predict(stores[['longitude', 'latitude']].as_matrix())
 
+    # Holiday information added
     data['hol']['visit_date'] = pd.to_datetime(data['hol']['visit_date'])
     data['hol']['day_of_week'] = lbl.fit_transform(data['hol']['day_of_week'])
     data['hol']['visit_date'] = data['hol']['visit_date'].dt.date
@@ -148,18 +153,34 @@ def import_data():
 
 
 def create_train_test(data, stores, clean=False, predict_large_party=False):
+    '''
+
+    :param data: The prepared dataframes built from csv files
+    :param stores: A dataframe of grouped stores and aggregated metrics
+    :param clean: If this is true, we will remove stores and other categorical variables that don't exist in the
+        test set from the training set
+    :param predict_large_party: If this is true we will use logistic regression to try and predict whether
+        a large party (greater than 120) was present on this day
+    :return: Returns a finzalized train and test data frame
+    '''
+
+    # Join holiday data
     train = pd.merge(data['tra'], data['hol'], how='left', on=['visit_date'])
     test = pd.merge(data['tes'], data['hol'], how='left', on=['visit_date'])
 
+    # Join store aggregates
     train = pd.merge(train, stores, how='left', on=['air_store_id', 'dow'])
     test = pd.merge(test, stores, how='left', on=['air_store_id', 'dow'])
 
+    # Join the AirREGI and HPG reservation data
     for df in ['ar', 'hr']:
         train = pd.merge(train, data[df], how='left', on=['air_store_id', 'visit_date'])
         test = pd.merge(test, data[df], how='left', on=['air_store_id', 'visit_date'])
 
+    # Rename the id column
     train['id'] = train.apply(lambda r: '_'.join([str(r['air_store_id']), str(r['visit_date'])]), axis=1)
 
+    # Calculate the top level reservation aggregates
     train['total_reserv_sum'] = train['rv1_x'] + train['rv1_y']
     train['total_reserv_mean'] = (train['rv2_x'] + train['rv2_y']) / 2
     train['total_reserv_dt_diff_mean'] = (train['rs2_x'] + train['rs2_y']) / 2
@@ -168,7 +189,7 @@ def create_train_test(data, stores, clean=False, predict_large_party=False):
     test['total_reserv_mean'] = (test['rv2_x'] + test['rv2_y']) / 2
     test['total_reserv_dt_diff_mean'] = (test['rs2_x'] + test['rs2_y']) / 2
 
-    # NEW FEATURES FROM JMBULL
+    # NEW FEATURES FROM JMBULL not very useful but included nonetheless
     train['date_int'] = train['visit_date'].apply(lambda x: x.strftime('%Y%m%d')).astype(int)
     test['date_int'] = test['visit_date'].apply(lambda x: x.strftime('%Y%m%d')).astype(int)
     train['var_max_lat'] = train['latitude'].max() - train['latitude']
@@ -176,20 +197,24 @@ def create_train_test(data, stores, clean=False, predict_large_party=False):
     test['var_max_lat'] = test['latitude'].max() - test['latitude']
     test['var_max_long'] = test['longitude'].max() - test['longitude']
 
-    # NEW FEATURES FROM Georgii Vyshnia
+    # NEW FEATURES FROM Georgii Vyshnia not very useful but included nonetheless
     train['lon_plus_lat'] = train['longitude'] + train['latitude']
     test['lon_plus_lat'] = test['longitude'] + test['latitude']
 
+    # Label encoding to a simpler store ID
     lbl = preprocessing.LabelEncoder()
     train['air_store_id2'] = lbl.fit_transform(train['air_store_id'])
     test['air_store_id2'] = lbl.transform(test['air_store_id'])
 
+    # If true run the train_clean function. Details below
     if clean:
         train, test = train_clean(train, test)
 
+    # Fill NaNs with -1
     train = train.fillna(-1)
     test = test.fillna(-1)
 
+    # If true, use a logistic regression to predict whether the test data set will have a large party or not
     if predict_large_party:
         train['large_party'] = np.where(train['visitors'] >= 120, 1., 0.)
 
@@ -214,7 +239,8 @@ def create_train_test(data, stores, clean=False, predict_large_party=False):
 def train_clean(train, test):
     '''
     Remove observations from the training set with categorical_vars that aren't in the test
-    set
+    set. Categorical vars to be removed are listed below but include Genre/Area names and store ids as well
+    as the location cluster
     '''
 
     categorical_vars = ['air_genre_name', 'air_area_name', 'air_store_id2', 'cluster']
@@ -224,30 +250,63 @@ def train_clean(train, test):
 
 
 def cluster_regions(df, n_clusters):
+    '''
+
+    :param df: Input dataframe
+    :param n_clusters: number of clusters to apply
+    :return: returns the model with which to predict lon/lat clusters
+    '''
     X = df[['longitude', 'latitude']].as_matrix()
     kmeans = cluster.KMeans(n_clusters=n_clusters, init='k-means++', n_init=25, max_iter=1000).fit(X)
     return kmeans
 
 
 def RMSLE(y, pred):
+    '''
+
+    :param y: validation y vector
+    :param pred: y-hat vector
+    :return: returns the root mean squared error; since the predictions are based on log(visitors) we
+    do not need to calculate log of RMSE
+    '''
     return metrics.mean_squared_error(y, pred) ** 0.5
 
 
 def time_series_cv(y, X, input_model):
+    '''
+    User-defined function to calculate cross validation based on time-series
+
+    :param y: cv y vector
+    :param X: cv X matrix
+    :param input_model: accepts any type of model with a predict function
+    :return: returns the time-series based cv RMSLE score
+    '''
+    # Using sci-kit learn we create a time-series specific cv split
     tscv = TimeSeriesSplit(n_splits=5)
     results = []
 
+    # Iterate over splits, including the past observations each time
     for train_index, test_index in tscv.split(X):
         X_train, X_test = X[train_index], X[test_index]
         y_train, y_test = y[train_index], y[test_index]
         model = input_model.fit(X_train, y_train)
         predictions = model.predict(X_test)
+        # Calculate RMSLE
         results.append(RMSLE(y_test, predictions))
 
+    # Return results
     return results
 
 
 def score_predictions(predictions, name, log=True):
+    '''
+    User-defined function to create a scoring file based on predictions
+
+    :param predictions: y-hat vector
+    :param name: file name
+    :param log: Boolean value to signify whether np.exp should be calculated on the y-hat value or not
+    :return: None type returned
+    '''
     # Score the file and save
     scored_df = pd.read_csv('./data/sample_submission.csv')
     temp_series = pd.Series(predictions)
@@ -260,21 +319,41 @@ def score_predictions(predictions, name, log=True):
 
 
 def predict_iter(train, test, model):
+    '''
+    For models that use differencing, the test set must be iterated since the calculated y-hat values will influence
+    the differencing
+
+    :param train: training data
+    :param test: test data
+    :param model: any type of model object with a predict function
+    :return: train and test data sets with y-hat scoring on the test
+    '''
+
+    # Save the input data sets so the analyst can see whether the process went as expected
     train.to_csv('./tmp/train_in.csv')
     test.to_csv('./tmp/test_in.csv')
+
+    # Identify the train/test subset so as not to confuse after they are combined
     train['subset'] = 'train'
     test['subset'] = 'test'
+
+    # Combine the train and test set since they are time-series contiguous
     combined = pd.concat([train, test])
     combined.sort_values(by=['air_store_id', 'visit_date'], inplace=True)
 
+    # Loop the number of unique days in the test set
     for _ in test.valid_date.unique():
+        # Create a y-hat vector
         combined['predictions'] = model.predict(combined)
+        # Calculate log_visitors value on y-hat vector for the test set and leave alone for the training
         combined['log_visitors'] = combined['predictions'].where(combined['subset'] == 'test',
                                                                  combined['log_visitors'])
 
+        # Calculate the visitors value based on yhat vector for the test set and leave alone for the training
         combined['visitors'] = np.exp(combined['predictions'].where(combined['subset'] == 'test',
                                                                     combined['visitors']))
 
+        # Re-calculate all of the lag and diff predictors based on the newly predicted log_visitors value
         combined['visitors_lag1'] = combined.groupby(['air_store_id'])['log_visitors'].shift()
         combined['visitors_diff1'] = combined.groupby(['air_store_id'])['log_visitors'].diff()
         combined['visitors_lag2'] = combined.groupby(['air_store_id'])['log_visitors'].shift(2)
@@ -290,11 +369,16 @@ def predict_iter(train, test, model):
         combined['visitors_lag7'] = combined.groupby(['air_store_id'])['log_visitors'].shift(7)
         combined['visitors_diff7'] = combined.groupby(['air_store_id'])['log_visitors'].diff(7)
 
+    # Once the looping is complete, drop the extraneous y-hat vector
     combined.drop('predictions', axis=1)
+
+    # Split the train and test data sets and drop the subset column
     train = combined[combined['subset'] == 'train']
     train.drop('subset', axis=1)
     test = combined[combined['subset'] == 'test']
     test.drop('subset', axis=1)
+
+    # Save the output to a file in order to analyze expectations
     train.to_csv('./tmp/train_out.csv')
     test.to_csv('./tmp/test_out.csv')
 
