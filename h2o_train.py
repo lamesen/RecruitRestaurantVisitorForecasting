@@ -53,21 +53,64 @@ aml.train(y="log_visitors",
           training_frame=h2o_train)
 
 # Save results
-model_path = h2o.save_model(model=aml, path="./tmp/mymodel", force=True)
+model_path = h2o.save_model(model=aml.leader, path="./tmp/mymodel2", force=True)
+saved_model = h2o.load_model(model_path)
 
 # Output leaderboard
 lb = aml.leaderboard
 
-# Set up testing HDF
-h2o_test = h2o.H2OFrame(test)
+# Save original train/test data
+train.to_csv('./tmp/train_in.csv')
+test.to_csv('./tmp/test_in.csv')
 
-# Generate predictions
-preds = aml.predict(h2o_test)
+# Mark train/test sets
+train['subset'] = 'train'
+test['subset'] = 'test'
+combined = pd.concat([train, test])
+combined.sort_values(by=['air_store_id', 'visit_date'], inplace=True)
+
+for _ in test.visit_date.unique():
+    # Set up testing HDF
+    h2o_test = h2o.H2OFrame(combined)
+    convert_columns_as_factor(h2o_test, ['dow', 'wom', 'year', 'month', 'day', 'day_of_week',
+                                     'holiday_flg', 'air_genre_name', 'air_area_name',
+                                     'air_genre_name0', 'air_genre_name1', 'air_genre_name2',
+                                     'air_genre_name3', 'air_genre_name4', 'air_genre_name5',
+                                     'air_genre_name6', 'air_genre_name7', 'air_genre_name8',
+                                     'air_genre_name9', 'air_area_name0', 'air_area_name1', 'air_area_name2',
+                                     'air_area_name3', 'air_area_name4', 'air_area_name5',
+                                     'air_area_name6', 'air_area_name7', 'air_area_name8',
+                                     'air_area_name9', 'cluster', 'large_party'])
+
+    # Generate predictions
+    preds = aml.leader.predict(h2o_test)
+    temp_df = h2o.as_list(preds)
+    temp_series = temp_df['predict']
+    temp_series[temp_series < 0] = 0
+    combined['predictions'] = temp_series
+
+    combined['log_visitors'] = combined['predictions'].where(combined['subset'] == 'test',
+                                                             combined['log_visitors'])
+
+    combined['visitors'] = np.exp(combined['predictions'].where(combined['subset'] == 'test',
+                                                                combined['log_visitors']))
+
+    combined['visitors_lag1'] = combined.groupby(['air_store_id'])['log_visitors'].shift()
+    combined['visitors_diff1'] = combined.groupby(['air_store_id'])['log_visitors'].diff()
+    combined['visitors_lag2'] = combined.groupby(['air_store_id'])['log_visitors'].shift(2)
+    combined['visitors_diff2'] = combined.groupby(['air_store_id'])['log_visitors'].diff(2)
+    combined['visitors_lag3'] = combined.groupby(['air_store_id'])['log_visitors'].shift(3)
+    combined['visitors_diff3'] = combined.groupby(['air_store_id'])['log_visitors'].diff(3)
+    combined['visitors_lag4'] = combined.groupby(['air_store_id'])['log_visitors'].shift(4)
+    combined['visitors_diff4'] = combined.groupby(['air_store_id'])['log_visitors'].diff(4)
+    combined['visitors_lag5'] = combined.groupby(['air_store_id'])['log_visitors'].shift(5)
+    combined['visitors_diff5'] = combined.groupby(['air_store_id'])['log_visitors'].diff(5)
+    combined['visitors_lag6'] = combined.groupby(['air_store_id'])['log_visitors'].shift(6)
+    combined['visitors_diff6'] = combined.groupby(['air_store_id'])['log_visitors'].diff(6)
+    combined['visitors_lag7'] = combined.groupby(['air_store_id'])['log_visitors'].shift(7)
+    combined['visitors_diff7'] = combined.groupby(['air_store_id'])['log_visitors'].diff(7)
 
 # Score the file and save
 scored_df = pd.read_csv('./data/sample_submission.csv')
-temp_df = h2o.as_list(preds)
-temp_series = temp_df['predict']
-temp_series[temp_series < 0] = 0
-scored_df['visitors'] = np.exp(temp_series)
-scored_df.to_csv('./Output/scored_automl.csv', index=False)
+scored_final_df = pd.merge(scored_df[['id']], combined[['id', 'visitors']], on='id')
+scored_final_df.to_csv('./Output/scored_automl.csv', index=False)

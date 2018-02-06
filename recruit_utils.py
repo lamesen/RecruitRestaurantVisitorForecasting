@@ -78,20 +78,20 @@ def import_data():
     data['tes']['subset'] = 'test'
     combined = pd.concat([data['tra'], data['tes']])
     combined.sort_values(by=['air_store_id', 'visit_date'], inplace=True)
-    combined['visitors_lag1'] = combined.groupby(['air_store_id'])['visitors'].shift()
-    combined['visitors_diff1'] = combined.groupby(['air_store_id'])['visitors'].diff()
-    combined['visitors_lag2'] = combined.groupby(['air_store_id'])['visitors'].shift(2)
-    combined['visitors_diff2'] = combined.groupby(['air_store_id'])['visitors'].diff(2)
-    combined['visitors_lag3'] = combined.groupby(['air_store_id'])['visitors'].shift(3)
-    combined['visitors_diff3'] = combined.groupby(['air_store_id'])['visitors'].diff(3)
-    combined['visitors_lag4'] = combined.groupby(['air_store_id'])['visitors'].shift(4)
-    combined['visitors_diff4'] = combined.groupby(['air_store_id'])['visitors'].diff(4)
-    combined['visitors_lag5'] = combined.groupby(['air_store_id'])['visitors'].shift(5)
-    combined['visitors_diff5'] = combined.groupby(['air_store_id'])['visitors'].diff(5)
-    combined['visitors_lag6'] = combined.groupby(['air_store_id'])['visitors'].shift(6)
-    combined['visitors_diff6'] = combined.groupby(['air_store_id'])['visitors'].diff(6)
-    combined['visitors_lag7'] = combined.groupby(['air_store_id'])['visitors'].shift(7)
-    combined['visitors_diff7'] = combined.groupby(['air_store_id'])['visitors'].diff(7)
+    combined['visitors_lag1'] = combined.groupby(['air_store_id'])['log_visitors'].shift()
+    combined['visitors_diff1'] = combined.groupby(['air_store_id'])['log_visitors'].diff()
+    combined['visitors_lag2'] = combined.groupby(['air_store_id'])['log_visitors'].shift(2)
+    combined['visitors_diff2'] = combined.groupby(['air_store_id'])['log_visitors'].diff(2)
+    combined['visitors_lag3'] = combined.groupby(['air_store_id'])['log_visitors'].shift(3)
+    combined['visitors_diff3'] = combined.groupby(['air_store_id'])['log_visitors'].diff(3)
+    combined['visitors_lag4'] = combined.groupby(['air_store_id'])['log_visitors'].shift(4)
+    combined['visitors_diff4'] = combined.groupby(['air_store_id'])['log_visitors'].diff(4)
+    combined['visitors_lag5'] = combined.groupby(['air_store_id'])['log_visitors'].shift(5)
+    combined['visitors_diff5'] = combined.groupby(['air_store_id'])['log_visitors'].diff(5)
+    combined['visitors_lag6'] = combined.groupby(['air_store_id'])['log_visitors'].shift(6)
+    combined['visitors_diff6'] = combined.groupby(['air_store_id'])['log_visitors'].diff(6)
+    combined['visitors_lag7'] = combined.groupby(['air_store_id'])['log_visitors'].shift(7)
+    combined['visitors_diff7'] = combined.groupby(['air_store_id'])['log_visitors'].diff(7)
 
     data['tra'] = combined[combined['subset'] == 'train']
     data['tra'].drop('subset', axis=1)
@@ -206,6 +206,7 @@ def create_train_test(data, stores, clean=False, predict_large_party=False):
         lr = sm.Logit(y, X)
         model = lr.fit()
         test['large_party'] = model.predict(test[subset])
+        test['large_party'] = np.where(test['large_party'] >= 0.5, 1., 0)
 
     return train, test
 
@@ -256,3 +257,45 @@ def score_predictions(predictions, name, log=True):
     else:
         scored_df['visitors'] = temp_series
     scored_df.to_csv('./Output/' + name + '.csv', index=False)
+
+
+def predict_iter(train, test, model):
+    train.to_csv('./tmp/train_in.csv')
+    test.to_csv('./tmp/test_in.csv')
+    train['subset'] = 'train'
+    test['subset'] = 'test'
+    combined = pd.concat([train, test])
+    combined.sort_values(by=['air_store_id', 'visit_date'], inplace=True)
+
+    for _ in test.valid_date.unique():
+        combined['predictions'] = model.predict(combined)
+        combined['log_visitors'] = combined['predictions'].where(combined['subset'] == 'test',
+                                                                 combined['log_visitors'])
+
+        combined['visitors'] = np.exp(combined['predictions'].where(combined['subset'] == 'test',
+                                                                    combined['visitors']))
+
+        combined['visitors_lag1'] = combined.groupby(['air_store_id'])['log_visitors'].shift()
+        combined['visitors_diff1'] = combined.groupby(['air_store_id'])['log_visitors'].diff()
+        combined['visitors_lag2'] = combined.groupby(['air_store_id'])['log_visitors'].shift(2)
+        combined['visitors_diff2'] = combined.groupby(['air_store_id'])['log_visitors'].diff(2)
+        combined['visitors_lag3'] = combined.groupby(['air_store_id'])['log_visitors'].shift(3)
+        combined['visitors_diff3'] = combined.groupby(['air_store_id'])['log_visitors'].diff(3)
+        combined['visitors_lag4'] = combined.groupby(['air_store_id'])['log_visitors'].shift(4)
+        combined['visitors_diff4'] = combined.groupby(['air_store_id'])['log_visitors'].diff(4)
+        combined['visitors_lag5'] = combined.groupby(['air_store_id'])['log_visitors'].shift(5)
+        combined['visitors_diff5'] = combined.groupby(['air_store_id'])['log_visitors'].diff(5)
+        combined['visitors_lag6'] = combined.groupby(['air_store_id'])['log_visitors'].shift(6)
+        combined['visitors_diff6'] = combined.groupby(['air_store_id'])['log_visitors'].diff(6)
+        combined['visitors_lag7'] = combined.groupby(['air_store_id'])['log_visitors'].shift(7)
+        combined['visitors_diff7'] = combined.groupby(['air_store_id'])['log_visitors'].diff(7)
+
+    combined.drop('predictions', axis=1)
+    train = combined[combined['subset'] == 'train']
+    train.drop('subset', axis=1)
+    test = combined[combined['subset'] == 'test']
+    test.drop('subset', axis=1)
+    train.to_csv('./tmp/train_out.csv')
+    test.to_csv('./tmp/test_out.csv')
+
+    return train, test
