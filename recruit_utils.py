@@ -20,6 +20,12 @@ import statsmodels.api as sm
 
 
 def import_data():
+    '''
+    Data munging for Recruit Restaurant Visitor Forecasting competition
+
+    :return: This function returns two objects. The first is a DataFrame will all data sets contained. The second
+    is a DataFrame that contains aggregated store metrics.
+    '''
     # Importing data
     data = {
         'tra': pd.read_csv('./data/air_visit_data.csv'),
@@ -274,7 +280,8 @@ def RMSLE(y, pred):
 
 def time_series_cv(y, X, input_model):
     '''
-    User-defined function to calculate cross validation based on time-series
+    User-defined function to calculate cross validation based on time-series based on
+    https://robjhyndman.com/hyndsight/tscv/
 
     :param y: cv y vector
     :param X: cv X matrix
